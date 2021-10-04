@@ -1065,6 +1065,7 @@ def test_customer_register(
     channel_PLN,
     gift_card,
     gift_card_expiry_date,
+    order,
 ):
     mocked_generator.return_value = "token"
     email = "customer@example.com"
@@ -1075,6 +1076,10 @@ def test_customer_register(
 
     gift_card_expiry_date.used_by_email = email
     gift_card_expiry_date.save(update_fields=["used_by_email"])
+
+    order.user = None
+    order.user_email = email
+    order.save(update_fields=["user_email", "user"])
 
     redirect_url = "http://localhost:3000"
     variables = {
@@ -1134,6 +1139,9 @@ def test_customer_register(
 
     gift_card_expiry_date.refresh_from_db()
     assert gift_card_expiry_date.used_by == new_user
+
+    order.refresh_from_db()
+    assert order.user == new_user
 
 
 @override_settings(ENABLE_ACCOUNT_CONFIRMATION_BY_EMAIL=False)
@@ -1571,12 +1579,13 @@ def test_customer_update_generates_event_when_changing_email_by_app(
     assert email_changed_event.parameters == {"message": "mirumee@example.com"}
 
 
-def test_customer_update_assign_gift_cards(
+def test_customer_update_assign_gift_cards_and_orders(
     staff_api_client,
     staff_user,
     customer_user,
     address,
     gift_card,
+    order,
     permission_manage_users,
 ):
     # given
@@ -1592,6 +1601,10 @@ def test_customer_update_assign_gift_cards(
     gift_card.created_by = None
     gift_card.created_by_email = new_email
     gift_card.save(update_fields=["created_by", "created_by_email"])
+
+    order.user = None
+    order.user_email = new_email
+    order.save(update_fields=["user_email", "user"])
 
     variables = {
         "id": user_id,
@@ -1612,6 +1625,8 @@ def test_customer_update_assign_gift_cards(
     customer_user.refresh_from_db()
     assert gift_card.created_by == customer_user
     assert gift_card.created_by_email == customer_user.email
+    order.refresh_from_db()
+    assert order.user == customer_user
 
 
 ACCOUNT_UPDATE_QUERY = """
@@ -2856,8 +2871,8 @@ def test_staff_update_deactivate_with_manage_staff_all_perms_manageable(
     assert staff_user1.is_active is False
 
 
-def test_staff_update_update_email_and_assign_gift_cards(
-    staff_api_client, permission_manage_staff, gift_card, media_root
+def test_staff_update_update_email_assign_gift_cards_and_orders(
+    staff_api_client, permission_manage_staff, gift_card, order
 ):
     # given
     query = STAFF_UPDATE_MUTATIONS
@@ -2868,6 +2883,10 @@ def test_staff_update_update_email_and_assign_gift_cards(
     gift_card.created_by = None
     gift_card.created_by_email = new_email
     gift_card.save(update_fields=["created_by", "created_by_email"])
+
+    order.user = None
+    order.user_email = new_email
+    order.save(update_fields=["user_email", "user"])
 
     id = graphene.Node.to_global_id("User", staff_user.id)
     variables = {"id": id, "input": {"email": new_email}}
@@ -2887,6 +2906,8 @@ def test_staff_update_update_email_and_assign_gift_cards(
     staff_user.refresh_from_db()
     assert gift_card.created_by == staff_user
     assert gift_card.created_by_email == staff_user.email
+    order.refresh_from_db()
+    assert order.user == staff_user
 
 
 STAFF_DELETE_MUTATION = """
@@ -5099,9 +5120,14 @@ mutation emailUpdate($token: String!, $channel: String) {
 """
 
 
+@patch("saleor.graphql.account.mutations.account.assign_user_orders")
 @patch("saleor.graphql.account.mutations.account.assign_user_gift_cards")
 def test_email_update(
-    assign_gift_cards_mock, user_api_client, customer_user, channel_PLN
+    assign_gift_cards_mock,
+    assign_orders_mock,
+    user_api_client,
+    customer_user,
+    channel_PLN,
 ):
     new_email = "new_email@example.com"
     payload = {
@@ -5118,6 +5144,7 @@ def test_email_update(
     data = content["data"]["confirmEmailChange"]
     assert data["user"]["email"] == new_email
     assign_gift_cards_mock.assert_called_once_with(customer_user)
+    assign_orders_mock.assert_called_once_with(customer_user)
 
 
 def test_email_update_to_existing_email(user_api_client, customer_user, staff_user):
